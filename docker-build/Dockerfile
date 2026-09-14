@@ -48,6 +48,37 @@ RUN set -eux; \
     echo "$(cut -d' ' -f1 /tini.sha256sum)  /tini" | sha256sum -c -; \
     chmod 0755 /tini
 
+# ----------------------------------------------------------------- pythonldap
+# Salt's LDAP eauth needs the python-ldap module, which the onedir packages do
+# not bundle - without it every LDAP login fails with "LDAP authentication
+# requires python-ldap module" and nothing else. It is published as an sdist
+# only, so it compiles against OpenLDAP here and the toolchain stays in this
+# stage. salt-pip installs into /opt/saltstack/salt/extras-3.14, a directory
+# Salt puts on its own path, so the result is one self-contained tree to copy.
+FROM registry.access.redhat.com/ubi10-minimal:${UBI_VERSION} AS pythonldap
+
+ARG SALT_VERSION
+
+RUN set -eux; \
+    rpm --import https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public; \
+    printf '%s\n' \
+      '[salt]' \
+      'name=Salt Project' \
+      'baseurl=https://packages.broadcom.com/artifactory/saltproject-rpm/' \
+      'enabled=1' \
+      'gpgcheck=1' \
+      'gpgkey=https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public' \
+      > /etc/yum.repos.d/salt.repo; \
+    microdnf install -y --setopt=install_weak_deps=0 --nodocs \
+        "salt-master-${SALT_VERSION}" \
+        gcc \
+        openldap-devel \
+        cyrus-sasl-devel \
+        openssl-devel; \
+    salt-pip install --no-cache-dir python-ldap; \
+    # Prove it imports here rather than discovering it at login time.
+    /opt/saltstack/salt/bin/python3 -c 'import ldap; print(ldap.__version__)'
+
 # ---------------------------------------------------------------------- salt
 FROM registry.access.redhat.com/ubi10-minimal:${UBI_VERSION}
 
@@ -77,12 +108,20 @@ RUN set -eux; \
         "salt-master-${SALT_VERSION}" \
         "salt-api-${SALT_VERSION}" \
         git-core \
-        openssh-clients; \
+        openssh-clients \
+        openldap; \
     salt-master --version; \
     microdnf clean all; \
     rm -rf /var/cache/dnf /var/cache/yum /etc/yum.repos.d/salt.repo
 
 COPY --from=tini /tini /usr/bin/tini
+
+# python-ldap, built in the stage above. Salt reads this directory itself, so
+# nothing needs to be added to PYTHONPATH.
+# Copied by glob rather than by exact name: the directory is named for the
+# bundled Python, so pinning extras-3.14 would silently stop matching the day
+# Salt moves to 3.15 - and a COPY that matches nothing does not fail.
+COPY --from=pythonldap /opt/saltstack/salt/extras-3.*/ /opt/saltstack/salt/extras-python/
 
 # Salt needs none of these to run a master, and a container that cannot
 # escalate privileges is one less thing to reason about.
@@ -101,6 +140,16 @@ RUN set -eux; \
                  /var/cache/salt /var/log/salt /var/run/salt; \
     chmod -R g=u /etc/salt /srv/salt /srv/pillar \
                  /var/cache/salt /var/log/salt /var/run/salt
+
+# The module is only useful if Salt itself can import it - checked here so a
+# broken copy fails the build rather than surfacing as a failed login.
+# Put the copied tree where the bundled Python actually looks, then prove Salt
+# can import it - a broken copy should fail the build, not a login.
+RUN set -eux; \
+    extras="$(ls -d /opt/saltstack/salt/extras-3.* | head -1)"; \
+    cp -r /opt/saltstack/salt/extras-python/. "$extras/"; \
+    rm -rf /opt/saltstack/salt/extras-python; \
+    /opt/saltstack/salt/bin/python3 -c 'import ldap; print("python-ldap", ldap.__version__)'
 
 # 4505 publish, 4506 return, 8000 salt-api.
 EXPOSE 4505 4506 8000

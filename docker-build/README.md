@@ -51,6 +51,7 @@ x86_64 and aarch64 at 3008.2.
 | curl and checksums confined to a builder stage | absent from the final image |
 | runs as uid 1000, group 0 | non-root, and writable under OpenShift's arbitrary UID |
 | `salt-master --version` during build | a broken install fails the build, not the first deploy |
+| `import ldap` during build | LDAP auth fails at login otherwise, with no other symptom |
 
 The chart matches: `readOnlyRootFilesystem`, `runAsNonRoot`, all capabilities
 dropped, and `seccompProfile: RuntimeDefault`, with the paths Salt writes to
@@ -59,6 +60,12 @@ mounted as `emptyDir`.
 **Group-writable, not fixed-uid.** OpenShift runs containers as an arbitrary UID
 from the namespace range with gid 0 in the supplementary groups, so an image only
 its own uid can write fails under `restricted-v2`.
+
+**python-ldap is built in, not bundled.** Salt's onedir packages omit it, so
+`external_auth: ldap` fails every login with "LDAP authentication requires
+python-ldap module" and no other clue. It is published as an sdist only, so a
+separate stage compiles it against OpenLDAP and the final image gets the
+resulting extras directory plus the `openldap` runtime library - no compiler.
 
 **One process per container.** The official image's `saltinit` supervises
 salt-master and salt-api together. Here salt-master is the command and salt-api
