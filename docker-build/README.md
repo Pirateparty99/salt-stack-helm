@@ -65,8 +65,11 @@ salt-master and salt-api together. Here salt-master is the command and salt-api
 is the same image with a different command, so the kubelet supervises each and a
 probe failure names the process that actually failed.
 
-## Not yet run
+## Published
 
-The image builds in CI and pushed to Docker Hub, but it has not been started
-anywhere. The read-only root filesystem in particular is untested — if the master
-fails to start, that is the first thing to relax.
+`docker.io/pirateparty99/salt:3008.2`, amd64 and arm64. Verified from the
+registry: `User 1000:0`, entrypoint tini, `salt-master --log-level=info`, ports
+4505/4506/8000, `STOPSIGNAL SIGTERM`, base `ubi10-minimal` 10.2.
+
+It has not been *started* anywhere yet. The read-only root filesystem is the
+least-proven part — if the master fails to start, relax that first.

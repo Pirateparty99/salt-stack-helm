@@ -30,10 +30,13 @@ enable it without `api.enabled` rather than producing a Route to nothing.
 
 ## Images
 
-There is no current upstream Salt container. `docker.io/saltstack/salt` stops at
-**3006.5** (Feb 2024) while Salt itself is at **3008.x**, so the chart's default
-tag is old. Point `image.repository`/`image.tag` at your own build to run a
-current Salt — the chart makes no assumption about which tag you use.
+Defaults to `pirateparty99/salt`, built by [`docker-build/`](../../docker-build)
+in this repo: Salt 3008.2 on UBI 10, multi-arch (amd64/arm64), non-root.
+
+There is no current upstream alternative — `docker.io/saltstack/salt` stops at
+**3006.5** (Feb 2024) while Salt is at **3008.x**. Point
+`image.repository`/`image.tag` elsewhere if you build your own; the chart makes
+no assumption about the tag.
 
 ## OpenShift
 

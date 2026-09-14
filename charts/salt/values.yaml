@@ -6,11 +6,11 @@
 replicaCount: 1
 
 image:
-  repository: saltstack/salt
-  # -- Defaults to .Chart.AppVersion. NOTE: the official saltstack/salt images
-  # stop at 3006.5 (Feb 2024) while Salt itself is at 3008.x - there is no
-  # current upstream container. Point this at your own build to run a newer
-  # Salt; the chart makes no assumption about the tag.
+  # -- Built by this repo's docker-build/, because there is no current upstream
+  # Salt container: the official saltstack/salt images stop at 3006.5 (Feb 2024)
+  # while Salt itself is at 3008.x. UBI 10, multi-arch, non-root.
+  repository: pirateparty99/salt
+  # -- Defaults to .Chart.AppVersion.
   tag: ""
   pullPolicy: IfNotPresent
 
