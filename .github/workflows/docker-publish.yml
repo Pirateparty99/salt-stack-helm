@@ -40,9 +40,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Work out the Salt version
-        id: salt
-        run: echo "version=${{ github.event.inputs.salt_version || env.DEFAULT_SALT_VERSION }}" >> "$GITHUB_OUTPUT"
+      - name: Work out the image name and version
+        id: meta
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          version="${{ github.event.inputs.salt_version || env.DEFAULT_SALT_VERSION }}"
+          owner="${DOCKERHUB_USERNAME}"
+          # Without the secret the tag would be "/salt:...", which buildx
+          # rejects as an invalid reference before the push gate is ever
+          # consulted - so fall back to a name that is merely unpushable.
+          if [ -z "$owner" ]; then
+            owner="local"
+            echo "::warning::DOCKERHUB_USERNAME is not set - building only, not pushing."
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=$owner/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
 
       # QEMU so the arm64 image can be built on an amd64 runner. The Salt repo
       # serves both architectures, so there is no reason to publish only one.
@@ -63,10 +76,10 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ env.HAVE_CREDS == 'true' }}
           build-args: |
-            SALT_VERSION=${{ steps.salt.outputs.version }}
+            SALT_VERSION=${{ steps.meta.outputs.version }}
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.salt.outputs.version }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest
           # Layer cache in the registry, so a rebuild that only changes the Salt
           # version does not re-download the base image and apt metadata.
           cache-from: type=gha
@@ -75,7 +88,8 @@ jobs:
       - name: Say what happened
         run: |
           if [ "${HAVE_CREDS}" = "true" ]; then
-            echo "Pushed ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.salt.outputs.version }}"
+            echo "Pushed ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
           else
-            echo "Built but not pushed: DOCKERHUB_USERNAME/DOCKERHUB_TOKEN are not set."
+            echo "Built but not pushed: set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN"
+            echo "in Settings -> Secrets and variables -> Actions, then re-run."
           fi
