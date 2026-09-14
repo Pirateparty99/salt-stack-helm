@@ -19,9 +19,35 @@
 #   docker build -t <repo>/saltgui:1.34.0 --build-arg SALTGUI_VERSION=1.34.0 .
 
 ARG UBI_VERSION=10.2
-FROM registry.access.redhat.com/ubi10-minimal:${UBI_VERSION}
+
+# ------------------------------------------------------------------ fetcher
+# curl and tar live only here. Uninstalling them from the final image instead
+# would be both fragile - removing packages from a minimal base drags
+# dependencies with them - and pointless, since a discarded stage leaves
+# nothing behind either way.
+FROM registry.access.redhat.com/ubi10-minimal:${UBI_VERSION} AS fetch
 
 # Any tag from https://github.com/erwindon/SaltGUI/tags
+ARG SALTGUI_VERSION=1.34.0
+
+RUN set -eux; \
+    # Installed explicitly rather than assumed: ubi-minimal's contents are not
+    # a stable interface. The salt image's fetch stage does the same and builds
+    # cleanly, so this is not where the previous failure was.
+    microdnf install -y --setopt=install_weak_deps=0 --nodocs curl tar gzip; \
+    curl -fsSL -o /tmp/saltgui.tar.gz \
+      "https://github.com/erwindon/SaltGUI/archive/refs/tags/${SALTGUI_VERSION}.tar.gz"; \
+    mkdir -p /saltgui; \
+    # Only the saltgui/ directory is the served site - the rest of the tarball
+    # is tests, tooling and docs.
+    tar -xzf /tmp/saltgui.tar.gz -C /saltgui --strip-components=2 \
+        "SaltGUI-${SALTGUI_VERSION}/saltgui"; \
+    test -f /saltgui/index.html; \
+    test -d /saltgui/static
+
+# ------------------------------------------------------------------ runtime
+FROM registry.access.redhat.com/ubi10-minimal:${UBI_VERSION}
+
 ARG SALTGUI_VERSION=1.34.0
 
 LABEL org.opencontainers.image.title="saltgui" \
@@ -31,27 +57,9 @@ LABEL org.opencontainers.image.title="saltgui" \
       org.opencontainers.image.url="https://github.com/erwindon/SaltGUI" \
       org.opencontainers.image.licenses="MIT"
 
-# curl and tar are only needed to fetch the release; they go in the same layer
-# so they are not left in the image.
-RUN set -eux; \
-    microdnf install -y --setopt=install_weak_deps=0 --nodocs curl tar gzip; \
-    curl -fsSL -o /tmp/saltgui.tar.gz \
-      "https://github.com/erwindon/SaltGUI/archive/refs/tags/${SALTGUI_VERSION}.tar.gz"; \
-    mkdir -p /saltgui; \
-    # Only the saltgui/ directory is the served site - the rest of the repo is
-    # tests, tooling and docs.
-    tar -xzf /tmp/saltgui.tar.gz -C /saltgui --strip-components=2 \
-        "SaltGUI-${SALTGUI_VERSION}/saltgui"; \
-    rm -f /tmp/saltgui.tar.gz; \
-    # The files are read by salt-api running as an arbitrary UID, so they are
-    # group-readable with group root, the same rule as the salt image.
-    chown -R 0:0 /saltgui; \
-    chmod -R g=u /saltgui; \
-    test -f /saltgui/index.html; \
-    test -d /saltgui/static; \
-    microdnf remove -y curl tar gzip; \
-    microdnf clean all; \
-    rm -rf /var/cache/dnf
+# Group root with group permissions mirroring user permissions: the init
+# container that copies these out runs as an arbitrary UID under OpenShift.
+COPY --from=fetch --chown=0:0 --chmod=g=u /saltgui /saltgui
 
 USER 1000:0
 
