@@ -14,8 +14,12 @@ This builds a current Salt master that also runs under OpenShift.
 docker build -t ghcr.io/pirateparty99/salt:3008.2 --build-arg SALT_VERSION=3008.2 docker-build
 ```
 
-`SALT_VERSION` is any version on PyPI — `3006.27` for the older maintained line,
-`3008.2` for current. `PYTHON_VERSION` defaults to 3.12.
+`SALT_VERSION` is any version the repo carries. List them:
+
+```bash
+curl -s https://packages.broadcom.com/artifactory/saltproject-deb/dists/stable/main/binary-amd64/Packages.gz \
+  | gunzip | awk '/^Package: salt-master$/{p=1} p&&/^Version:/{print $2;p=0}' | sort -Vr | head
+```
 
 ## Then point the chart at it
 
@@ -27,15 +31,17 @@ image:
 
 ## Choices worth knowing
 
-**Debian, not Alpine.** Salt publishes an sdist only, so pip builds it and its
-dependencies. On musl, `pyzmq`/`cryptography`/`cffi` have no matching wheels and
-compile from source; on glibc they resolve to manylinux wheels.
+**Official packages, not pip.** Salt publishes an sdist only to PyPI, so pip
+would rebuild Salt and its dependencies locally. The apt repo at
+`packages.broadcom.com/artifactory/saltproject-deb` carries the same onedir
+binaries — bundled Python included — that the Salt Project ships to servers, so
+the container runs the build they test and support. Both amd64 and arm64 are
+served.
 
-**Group-writable, not fixed-uid.** Files are owned `450:0` with group permissions
-mirroring user permissions. OpenShift runs containers as an arbitrary UID from
-the namespace range with gid 0 in the supplementary groups, so an image that only
-its own uid can write fails there. uid 450 matches the official image, so a
-volume written by one stays readable by the other.
+**Group-writable, not fixed-uid.** Every path Salt writes is group-owned by root
+with group permissions mirroring user permissions. OpenShift runs containers as
+an arbitrary UID from the namespace range with gid 0 in the supplementary
+groups, so an image only its own uid can write fails under `restricted-v2`.
 
 **One process per container.** The official image's `saltinit` supervises
 salt-master and salt-api together. Here salt-master is the command and salt-api
