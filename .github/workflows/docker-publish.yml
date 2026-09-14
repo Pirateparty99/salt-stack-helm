@@ -1,13 +1,14 @@
-# Builds the Salt master image and pushes it to Docker Hub.
+# Builds the images this repo ships and pushes them to Docker Hub.
 #
 # Requires two repository secrets (Settings -> Secrets and variables -> Actions):
-#   DOCKERHUB_USERNAME  your Docker Hub username
+#   DOCKERHUB_USERNAME  your Docker Hub username (lowercase - Docker Hub
+#                       namespaces are, and an uppercase one makes an invalid
+#                       image reference)
 #   DOCKERHUB_TOKEN     an access token from hub.docker.com/settings/security
-#                       (an access token, not your password - it can be revoked
-#                       on its own and scoped to read/write)
 #
-# The image name is <DOCKERHUB_USERNAME>/salt, so nothing here hardcodes an
-# account. Change IMAGE_NAME below if you want a different repository name.
+# Image names are <DOCKERHUB_USERNAME>/<image>, so nothing here hardcodes an
+# account. Without the secrets the images still build - only the push is
+# skipped.
 name: docker-publish
 
 on:
@@ -15,75 +16,73 @@ on:
     branches: [main]
     paths:
       - 'docker-build/**'
+      - 'docker-build-saltgui/**'
       - '.github/workflows/docker-publish.yml'
     tags: ['v*']
-  # Lets you build a specific Salt version without committing anything.
   workflow_dispatch:
-    inputs:
-      salt_version:
-        description: 'Salt version from the official apt repo'
-        required: false
-        default: '3008.2'
-
-env:
-  IMAGE_NAME: salt
-  DEFAULT_SALT_VERSION: '3008.2'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
       # secrets cannot be referenced directly in a step's `if:`, so the check is
-      # hoisted into an env var here. Without credentials the image is still
-      # built - the push is just skipped, rather than the job failing on auth.
+      # hoisted into an env var here.
       HAVE_CREDS: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+    strategy:
+      # Independent images: one failing should not hide the other's result.
+      fail-fast: false
+      matrix:
+        include:
+          - image: salt
+            context: docker-build
+            build_arg: SALT_VERSION=3008.2
+          - image: saltgui
+            context: docker-build-saltgui
+            build_arg: SALTGUI_VERSION=1.34.0
     steps:
       - uses: actions/checkout@v4
 
-      - name: Work out the image name and version
+      - name: Work out the image name
         id: meta
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          version="${{ github.event.inputs.salt_version || env.DEFAULT_SALT_VERSION }}"
           owner="${DOCKERHUB_USERNAME}"
           # Without the secret the tag would be "/salt:...", which buildx
-          # rejects as an invalid reference before the push gate is ever
-          # consulted - so fall back to a name that is merely unpushable.
+          # rejects as an invalid reference before the push gate is consulted -
+          # so fall back to a name that is merely unpushable.
           if [ -z "$owner" ]; then
             owner="local"
             echo "::warning::DOCKERHUB_USERNAME is not set - building only, not pushing."
           fi
+          version="${{ matrix.build_arg }}"
+          version="${version#*=}"
+          echo "image=$owner/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "image=$owner/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
 
-      # QEMU so the arm64 image can be built on an amd64 runner. The Salt repo
-      # serves both architectures, so there is no reason to publish only one.
+      # QEMU so arm64 can be built on an amd64 runner - the Salt repo serves
+      # both architectures.
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
-      # A secret with a stray newline or space produces "malformed HTTP
-      # Authorization header" from the registry, which reads like a wrong
-      # password and sends you looking in the wrong place. Checked here so the
-      # failure names the actual problem. Only lengths and booleans are printed,
-      # never any part of a value.
       - name: Check the credential shape
         if: ${{ env.HAVE_CREDS == 'true' }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
+          # A secret with a stray newline produces "malformed HTTP Authorization
+          # header" from the registry, which reads like a wrong password. Only
+          # lengths and booleans are printed, never any part of a value.
           bad=0
           for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN; do
             raw="${!name}"
             trimmed="$(printf '%s' "$raw" | tr -d '[:space:]')"
             if [ "${#raw}" -ne "${#trimmed}" ]; then
-              echo "::error::${name} contains whitespace or a newline (length ${#raw}, ${#trimmed} without). Re-enter it with no trailing newline."
+              echo "::error::${name} contains whitespace or a newline (length ${#raw}, ${#trimmed} without)."
               bad=1
             fi
           done
-          # Docker Hub namespaces are lowercase; an uppercase one also makes an
-          # invalid image reference later.
           user="${DOCKERHUB_USERNAME}"
           if [ "$user" != "$(printf '%s' "$user" | tr '[:upper:]' '[:lower:]')" ]; then
             echo "::error::DOCKERHUB_USERNAME has uppercase characters - Docker Hub namespaces are lowercase."
@@ -99,21 +98,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push ${{ matrix.image }}
         uses: docker/build-push-action@v6
         with:
-          context: docker-build
+          context: ${{ matrix.context }}
           platforms: linux/amd64,linux/arm64
           push: ${{ env.HAVE_CREDS == 'true' }}
-          build-args: |
-            SALT_VERSION=${{ steps.meta.outputs.version }}
+          build-args: ${{ matrix.build_arg }}
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
             ${{ steps.meta.outputs.image }}:latest
-          # Layer cache in the registry, so a rebuild that only changes the Salt
-          # version does not re-download the base image and apt metadata.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
       - name: Say what happened
         run: |
@@ -121,5 +117,4 @@ jobs:
             echo "Pushed ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
           else
             echo "Built but not pushed: set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN"
-            echo "in Settings -> Secrets and variables -> Actions, then re-run."
           fi

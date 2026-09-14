@@ -13,12 +13,35 @@ data:
   # With no `user` key at all Salt runs as whoever started it, which is correct
   # here and cannot be expressed by overriding the key.
   master: |
+    # Replacing /etc/salt/master drops the packaged default_include too, so
+    # master.d is only read because this puts it back. The LDAP bind password
+    # arrives that way, from a Secret rather than from this ConfigMap.
+    default_include: master.d/*.conf
+
     # The default pidfile is /var/run/salt-master.pid, which is on the
     # read-only root filesystem. This path is the emptyDir mounted below.
     pidfile: /var/run/salt/salt-master.pid
     {{- toYaml .Values.config | nindent 4 }}
     {{- if .Values.api.enabled }}
+
+    # salt-api refuses every client unless they are listed here.
+    netapi_enable_clients:
+      {{- toYaml .Values.api.enableClients | nindent 6 }}
+
     rest_cherrypy:
       port: {{ .Values.api.port }}
+      host: 0.0.0.0
       disable_ssl: true
+      {{- if .Values.saltgui.enabled }}
+      # salt-api serves the UI itself, so the browser talks to one origin and
+      # no CORS configuration is needed.
+      app: /saltgui/index.html
+      static: /saltgui/static
+      static_path: /static
+      {{- end }}
+    {{- end }}
+    {{- if and .Values.externalAuth.enabled .Values.externalAuth.config }}
+
+    external_auth:
+      {{- toYaml .Values.externalAuth.config | nindent 6 }}
     {{- end }}

@@ -65,6 +65,59 @@ Deployed to OKD 4.19 and confirmed running: admitted by `restricted-v2` with an
 assigned UID from the namespace range, `salt-key` responding, listening on 4505
 and 4506, and the root filesystem read-only.
 
+## Web UI
+
+[SaltGUI](https://github.com/erwindon/SaltGUI) is a static site served by
+salt-api itself, so the browser talks to one origin and no CORS setup is
+needed. It implements no authentication of its own: the login form sends a
+username, password and eauth type to salt-api, which authenticates them. That
+means the UI logs in against whatever `externalAuth` the master is configured
+with — including LDAP.
+
+```yaml
+api:
+  enabled: true
+saltgui:
+  enabled: true
+route:
+  enabled: true
+  host: salt.apps.example.com
+externalAuth:
+  enabled: true
+  existingSecret: salt-ldap
+  config:
+    ldap:
+      'CN=salt-admins,OU=Groups,OU=EXAMPLE,DC=example,DC=com%':
+        - .*
+        - '@runner'
+        - '@wheel'
+        - '@jobs'
+```
+
+The trailing `%` on the group DN is what marks it as a group rather than a
+user. Without it the rule matches a user of that name, which does not exist,
+and every login is refused.
+
+### The bind password
+
+It does not go in values. `externalAuth.existingSecret` names a Secret with an
+`ldap.conf` key, mounted at `/etc/salt/master.d/ldap.conf`:
+
+```yaml
+auth.ldap.server: dc01.example.com
+auth.ldap.port: 636
+auth.ldap.tls: True
+auth.ldap.basedn: OU=EXAMPLE,DC=example,DC=com
+auth.ldap.binddn: CN=ldap.svc,OU=Service Accounts,OU=EXAMPLE,DC=example,DC=com
+auth.ldap.bindpw: <the password>
+auth.ldap.accountattributename: sAMAccountName
+auth.ldap.groupattribute: memberOf
+auth.ldap.activedirectory: True
+```
+
+Replacing `/etc/salt/master` drops the packaged `default_include`, so the chart
+puts it back — that is the only reason `master.d` is read at all.
+
 ## Accepting minions
 
 `auto_accept` is off by default. Accept keys by hand:

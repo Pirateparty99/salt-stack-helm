@@ -57,6 +57,14 @@ service:
 api:
   enabled: false
   port: 8000
+  # -- Which API clients salt-api will serve. Modern Salt refuses every request
+  # unless this is set, so an api with an empty list is an api that rejects
+  # everything. These four are what SaltGUI uses.
+  enableClients:
+    - local
+    - local_async
+    - runner
+    - wheel
   # -- salt-api runs as a second container from the same image.
   resources:
     requests:
@@ -64,6 +72,42 @@ api:
       memory: 128Mi
     limits:
       memory: 512Mi
+
+# -- SaltGUI, a web interface served by salt-api itself. Requires api.enabled:
+# it is a static site that sends credentials to salt-api, which authenticates
+# them - so whatever external_auth the master is configured with is what the UI
+# logs in against. Served from the same origin as the API, which avoids CORS.
+#
+# The image only carries files; an init container copies them into a volume the
+# salt-api container reads, keeping the salt image free of web assets.
+saltgui:
+  enabled: false
+  image:
+    repository: pirateparty99/saltgui
+    tag: "1.34.0"
+    pullPolicy: IfNotPresent
+
+# -- Authentication for salt-api, as Salt's external_auth. Without it salt-api
+# has nothing to authenticate against and every login fails.
+#
+# The LDAP bind password does not belong here: set externalAuth.existingSecret
+# to a Secret holding a `ldap.conf` key, which is mounted into master.d and
+# merged over this. See the chart README.
+externalAuth:
+  enabled: false
+  # -- Rendered into the master config as `external_auth`. The AD group form is
+  # 'CN=group,OU=...%' - the trailing % is what marks it as a group rather than
+  # a user, and is easy to lose.
+  config: {}
+  #   ldap:
+  #     'CN=salt-admins,OU=Groups,OU=KANTO,DC=kanto,DC=internal%':
+  #       - .*
+  #       - '@runner'
+  #       - '@wheel'
+  #       - '@jobs'
+  # -- Secret with an `ldap.conf` key holding the auth.ldap.* settings,
+  # including the bind password. Mounted at /etc/salt/master.d/ldap.conf.
+  existingSecret: ""
 
 # -- OpenShift Route for salt-api. Ignored unless api.enabled. Routes are
 # HTTP(S) only, which is why this cannot expose 4505/4506.
