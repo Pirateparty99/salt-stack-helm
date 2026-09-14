@@ -4,10 +4,11 @@ description: Salt master on Kubernetes - configuration management and remote exe
 type: application
 
 # Chart version. Bumped on every change to the chart itself.
-version: 0.1.0
+version: 0.2.0
 
-# The Salt release the default image provides. Overridden by image.tag.
-appVersion: "3006.5"
+# The Salt release the default image provides, and therefore the default tag.
+# Must track the version docker-build/ publishes.
+appVersion: "3008.2"
 
 home: https://saltproject.io
 icon: https://saltproject.io/images/logo.svg
