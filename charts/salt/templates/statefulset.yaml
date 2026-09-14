@@ -50,11 +50,6 @@ spec:
             - name: ret
               containerPort: 4506
               protocol: TCP
-            {{- if .Values.api.enabled }}
-            - name: api
-              containerPort: {{ .Values.api.port }}
-              protocol: TCP
-            {{- end }}
           {{- if .Values.livenessProbe.enabled }}
           # TCP rather than HTTP: salt-master speaks its own protocol on 4505/4506
           # and serves no HTTP at all unless salt-api is turned on.
@@ -86,6 +81,40 @@ spec:
             - name: config
               mountPath: /etc/salt/master.d/master.conf
               subPath: master.conf
+        {{- if .Values.api.enabled }}
+        # salt-api is a separate process, not a mode of salt-master: enabling
+        # rest_cherrypy in the config alone leaves nothing listening on the api
+        # port. Same image, different command, so the kubelet supervises it and
+        # its probe reports on the api rather than on the master.
+        - name: salt-api
+          image: {{ include "salt.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["salt-api", "--log-level=info"]
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.api.port }}
+              protocol: TCP
+          {{- if .Values.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: salt-data
+              mountPath: /etc/salt/pki
+              subPath: pki
+            - name: config
+              mountPath: /etc/salt/master.d/master.conf
+              subPath: master.conf
+        {{- end }}
         {{- if .Values.gitsync.enabled }}
         - name: git-sync
           image: "{{ .Values.gitsync.image.repository }}:{{ .Values.gitsync.image.tag }}"

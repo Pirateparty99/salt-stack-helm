@@ -57,6 +57,13 @@ service:
 api:
   enabled: false
   port: 8000
+  # -- salt-api runs as a second container from the same image.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
 
 # -- OpenShift Route for salt-api. Ignored unless api.enabled. Routes are
 # HTTP(S) only, which is why this cannot expose 4505/4506.
