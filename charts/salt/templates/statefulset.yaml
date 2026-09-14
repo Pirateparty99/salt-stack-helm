@@ -1,0 +1,162 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "salt.fullname" . }}
+  labels:
+    {{- include "salt.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  serviceName: {{ include "salt.fullname" . }}-headless
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "salt.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll the pods when the master config changes; without this a config
+        # edit sits in the ConfigMap and the running master never reads it.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "salt.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "salt.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: salt-master
+          image: {{ include "salt.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: publish
+              containerPort: 4505
+              protocol: TCP
+            - name: ret
+              containerPort: 4506
+              protocol: TCP
+            {{- if .Values.api.enabled }}
+            - name: api
+              containerPort: {{ .Values.api.port }}
+              protocol: TCP
+            {{- end }}
+          {{- if .Values.livenessProbe.enabled }}
+          # TCP rather than HTTP: salt-master speaks its own protocol on 4505/4506
+          # and serves no HTTP at all unless salt-api is turned on.
+          livenessProbe:
+            tcpSocket:
+              port: ret
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+          {{- end }}
+          {{- if .Values.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: ret
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: salt-data
+              mountPath: /etc/salt/pki
+              subPath: pki
+            - name: salt-data
+              mountPath: /srv/salt
+              subPath: salt
+            - name: salt-data
+              mountPath: /srv/pillar
+              subPath: pillar
+            - name: config
+              mountPath: /etc/salt/master.d/master.conf
+              subPath: master.conf
+        {{- if .Values.gitsync.enabled }}
+        - name: git-sync
+          image: "{{ .Values.gitsync.image.repository }}:{{ .Values.gitsync.image.tag }}"
+          imagePullPolicy: {{ .Values.gitsync.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - --repo={{ required "gitsync.repo is required when gitsync.enabled" .Values.gitsync.repo }}
+            - --ref={{ .Values.gitsync.ref }}
+            - --period={{ .Values.gitsync.period }}
+            - --root=/srv/salt
+          {{- with .Values.gitsync.env }}
+          env:
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.gitsync.resources | nindent 12 }}
+          volumeMounts:
+            - name: salt-data
+              mountPath: /srv/salt
+              subPath: salt
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "salt.fullname" . }}-config
+        {{- if not .Values.persistence.enabled }}
+        - name: salt-data
+          emptyDir: {}
+        {{- else if .Values.persistence.existingClaim }}
+        - name: salt-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim }}
+        {{- end }}
+  {{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+  volumeClaimTemplates:
+    - metadata:
+        name: salt-data
+        labels:
+          {{- include "salt.labels" . | nindent 10 }}
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size | quote }}
+        {{- if .Values.persistence.storageClass }}
+        # storageClassName, not storageClass - the latter is not a field on a
+        # PVC spec and is silently ignored, leaving every claim on the cluster
+        # default no matter what was configured.
+        storageClassName: {{ .Values.persistence.storageClass | quote }}
+        {{- end }}
+  {{- end }}

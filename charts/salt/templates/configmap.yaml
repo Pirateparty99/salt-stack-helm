@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "salt.fullname" . }}-config
+  labels:
+    {{- include "salt.labels" . | nindent 4 }}
+data:
+  # Mounted at /etc/salt/master.d/master.conf, which salt-master reads in
+  # addition to its packaged defaults.
+  master.conf: |
+    {{- toYaml .Values.config | nindent 4 }}
+    {{- if .Values.api.enabled }}
+    rest_cherrypy:
+      port: {{ .Values.api.port }}
+      disable_ssl: true
+    {{- end }}

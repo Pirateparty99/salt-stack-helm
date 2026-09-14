@@ -1,0 +1,129 @@
+# Default values for the salt chart.
+
+# -- Number of salt-master pods. A master holds minion keys and PKI on its
+# volume, so more than one needs shared storage and an external key store;
+# leave at 1 unless you have arranged that.
+replicaCount: 1
+
+image:
+  repository: saltstack/salt
+  # -- Defaults to .Chart.AppVersion. NOTE: the official saltstack/salt images
+  # stop at 3006.5 (Feb 2024) while Salt itself is at 3008.x - there is no
+  # current upstream container. Point this at your own build to run a newer
+  # Salt; the chart makes no assumption about the tag.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# -- Extra salt-master configuration, rendered into /etc/salt/master.d/master.conf.
+# Anything valid in a master config file works here.
+config:
+  file_roots:
+    base:
+      - /srv/salt
+  pillar_roots:
+    base:
+      - /srv/pillar
+  # Minions are accepted by hand by default. Setting this to true accepts any
+  # minion that connects, which is fine for a lab and dangerous anywhere else.
+  auto_accept: false
+
+service:
+  type: ClusterIP
+  annotations: {}
+  # -- Only set with type LoadBalancer.
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+  ports:
+    # Minions connect to 4505 (publish) and 4506 (return). Both are raw TCP, so
+    # an Ingress or an OpenShift Route cannot carry them - minions outside the
+    # cluster need type LoadBalancer or NodePort.
+    publish: 4505
+    ret: 4506
+  nodePorts:
+    publish: ""
+    ret: ""
+
+# -- salt-api (REST). Off by default: it needs an auth backend configured in
+# `config` to be useful, and exposing it without one is worse than not having it.
+api:
+  enabled: false
+  port: 8000
+
+# -- OpenShift Route for salt-api. Ignored unless api.enabled. Routes are
+# HTTP(S) only, which is why this cannot expose 4505/4506.
+route:
+  enabled: false
+  host: ""
+  annotations: {}
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+persistence:
+  enabled: true
+  # -- Minion keys live here. Losing this volume means re-accepting every minion.
+  size: 4Gi
+  storageClass: ""
+  existingClaim: ""
+  accessModes:
+    - ReadWriteOnce
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# -- Pod-level security context. Deliberately empty: a hardcoded fsGroup or
+# runAsUser is rejected outright by OpenShift's restricted-v2 SCC, which
+# allocates each namespace its own UID range. Leaving this empty lets the
+# platform choose. Set it explicitly only on clusters that require it.
+podSecurityContext: {}
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# -- Probes check the master's TCP ports rather than an HTTP endpoint, because
+# salt-master serves no HTTP unless salt-api is enabled.
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 20
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# -- Sidecar that keeps /srv/salt in sync with a git repo, so state files are
+# version controlled rather than baked into the volume.
+gitsync:
+  enabled: false
+  image:
+    repository: registry.k8s.io/git-sync/git-sync
+    tag: v4.4.0
+    pullPolicy: IfNotPresent
+  repo: ""
+  ref: HEAD
+  period: 60s
+  env: {}
+  resources: {}

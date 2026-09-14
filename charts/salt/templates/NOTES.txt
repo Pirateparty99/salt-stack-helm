@@ -1,0 +1,25 @@
+Salt master {{ .Values.image.tag | default .Chart.AppVersion }} installed as {{ include "salt.fullname" . }}.
+
+Master address inside the cluster:
+  {{ include "salt.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+
+Minion config (/etc/salt/minion):
+  master: {{ include "salt.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+
+{{ if eq .Values.service.type "ClusterIP" -}}
+NOTE: service.type is ClusterIP, so only in-cluster minions can reach 4505/4506.
+Minions on other hosts need service.type=LoadBalancer or NodePort - these are raw
+TCP ports and cannot be exposed through an Ingress or an OpenShift Route.
+{{- end }}
+
+{{ if not .Values.config.auto_accept -}}
+Minion keys are accepted by hand:
+  kubectl exec -n {{ .Release.Namespace }} {{ include "salt.fullname" . }}-0 -- salt-key -L
+  kubectl exec -n {{ .Release.Namespace }} {{ include "salt.fullname" . }}-0 -- salt-key -A
+{{- end }}
+
+{{ if .Values.persistence.enabled -}}
+Minion keys live on the salt-data volume. Losing it means re-accepting every minion.
+{{- else -}}
+WARNING: persistence is disabled - minion keys are lost on every restart.
+{{- end }}

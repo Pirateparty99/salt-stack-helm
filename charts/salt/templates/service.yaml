@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "salt.fullname" . }}
+  labels:
+    {{- include "salt.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if and (eq .Values.service.type "LoadBalancer") .Values.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.service.loadBalancerIP }}
+  {{- end }}
+  {{- with .Values.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "salt.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: publish
+      port: {{ .Values.service.ports.publish }}
+      targetPort: publish
+      protocol: TCP
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePorts.publish }}
+      nodePort: {{ .Values.service.nodePorts.publish }}
+      {{- end }}
+    - name: ret
+      port: {{ .Values.service.ports.ret }}
+      targetPort: ret
+      protocol: TCP
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePorts.ret }}
+      nodePort: {{ .Values.service.nodePorts.ret }}
+      {{- end }}
+    {{- if .Values.api.enabled }}
+    - name: api
+      port: {{ .Values.api.port }}
+      targetPort: api
+      protocol: TCP
+    {{- end }}
+---
+# Headless service so each master pod gets a stable DNS name. Minions can be
+# pointed at a specific pod, which matters because a master's identity is tied
+# to the keys on its volume.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "salt.fullname" . }}-headless
+  labels:
+    {{- include "salt.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "salt.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: publish
+      port: {{ .Values.service.ports.publish }}
+      targetPort: publish
+      protocol: TCP
+    - name: ret
+      port: {{ .Values.service.ports.ret }}
+      targetPort: ret
+      protocol: TCP

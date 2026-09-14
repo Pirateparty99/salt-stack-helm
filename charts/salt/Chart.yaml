@@ -1,0 +1,19 @@
+apiVersion: v2
+name: salt
+description: Salt master on Kubernetes - configuration management and remote execution at scale.
+type: application
+
+# Chart version. Bumped on every change to the chart itself.
+version: 0.1.0
+
+# The Salt release the default image provides. Overridden by image.tag.
+appVersion: "3006.5"
+
+home: https://saltproject.io
+icon: https://saltproject.io/images/logo.svg
+sources:
+  - https://github.com/saltstack/salt
+keywords:
+  - configuration-management
+  - remote-execution
+  - infrastructure-automation
