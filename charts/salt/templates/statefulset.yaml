@@ -81,6 +81,7 @@ spec:
             - name: config
               mountPath: /etc/salt/master.d/master.conf
               subPath: master.conf
+            {{- include "salt.writableMounts" . | nindent 12 }}
         {{- if .Values.api.enabled }}
         # salt-api is a separate process, not a mode of salt-master: enabling
         # rest_cherrypy in the config alone leaves nothing listening on the api
@@ -114,6 +115,7 @@ spec:
             - name: config
               mountPath: /etc/salt/master.d/master.conf
               subPath: master.conf
+            {{- include "salt.writableMounts" . | nindent 12 }}
         {{- end }}
         {{- if .Values.gitsync.enabled }}
         - name: git-sync
@@ -158,6 +160,18 @@ spec:
         - name: config
           configMap:
             name: {{ include "salt.fullname" . }}-config
+        # Salt writes runtime state, logs and cache outside its PVC. With
+        # readOnlyRootFilesystem these have to be real mounts or the master
+        # fails to start; emptyDir keeps them off the node's disk image and
+        # discards them with the pod, which is what they are worth.
+        - name: run
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
         {{- if not .Values.persistence.enabled }}
         - name: salt-data
           emptyDir: {}

@@ -31,25 +31,42 @@ image:
 
 ## Choices worth knowing
 
-**Official packages, not pip.** Salt publishes an sdist only to PyPI, so pip
-would rebuild Salt and its dependencies locally. The apt repo at
-`packages.broadcom.com/artifactory/saltproject-deb` carries the same onedir
-binaries — bundled Python included — that the Salt Project ships to servers, so
-the container runs the build they test and support. Both amd64 and arm64 are
-served.
+**UBI 10 minimal base.** `registry.access.redhat.com/ubi10-minimal`, which is
+redistributable without a Red Hat subscription and is what OpenShift is built on.
 
-**Group-writable, not fixed-uid.** Every path Salt writes is group-owned by root
-with group permissions mirroring user permissions. OpenShift runs containers as
-an arbitrary UID from the namespace range with gid 0 in the supplementary
-groups, so an image only its own uid can write fails under `restricted-v2`.
+**Official packages, not pip.** PyPI carries an sdist only, so pip would rebuild
+Salt and its dependencies locally. The Salt RPM repo is flat and
+distro-agnostic — onedir builds with their own bundled Python — so it installs
+on UBI without depending on the base image's Python. Verified present for
+x86_64 and aarch64 at 3008.2.
+
+**Hardening, out of the box:**
+
+| Measure | Why |
+| --- | --- |
+| `gpgcheck=1`, key imported first | an unsigned or tampered package fails the build |
+| tini pinned and SHA-256 verified | the one binary not from a signed repo |
+| all setuid/setgid bits cleared, then asserted | nothing here needs to escalate |
+| no weak deps, no docs, caches and repo file removed | less to audit, less to patch |
+| curl and checksums confined to a builder stage | absent from the final image |
+| runs as uid 1000, group 0 | non-root, and writable under OpenShift's arbitrary UID |
+| `salt-master --version` during build | a broken install fails the build, not the first deploy |
+
+The chart matches: `readOnlyRootFilesystem`, `runAsNonRoot`, all capabilities
+dropped, and `seccompProfile: RuntimeDefault`, with the paths Salt writes to
+mounted as `emptyDir`.
+
+**Group-writable, not fixed-uid.** OpenShift runs containers as an arbitrary UID
+from the namespace range with gid 0 in the supplementary groups, so an image only
+its own uid can write fails under `restricted-v2`.
 
 **One process per container.** The official image's `saltinit` supervises
 salt-master and salt-api together. Here salt-master is the command and salt-api
 is the same image with a different command, so the kubelet supervises each and a
 probe failure names the process that actually failed.
 
-## Not yet built
+## Not yet run
 
-This has not been built or run — the Docker daemon was not reachable from the
-environment it was written in. Expect to iterate on the dependency list the first
-time you build it.
+The image builds in CI and pushed to Docker Hub, but it has not been started
+anywhere. The read-only root filesystem in particular is untested — if the master
+fails to start, that is the first thing to relax.

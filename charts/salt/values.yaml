@@ -98,11 +98,20 @@ resources:
 # platform choose. Set it explicitly only on clusters that require it.
 podSecurityContext: {}
 
+# -- Container security context. Hardened by default; every field here is one
+# the image was built to satisfy.
 securityContext:
   allowPrivilegeEscalation: false
+  # Salt writes only to the paths mounted below, so the rest of the filesystem
+  # can be read-only. Set false if a custom state or module needs to write
+  # somewhere else - and prefer adding a mount to turning this off.
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
   capabilities:
     drop:
       - ALL
+  seccompProfile:
+    type: RuntimeDefault
 
 # -- Probes check the master's TCP ports rather than an HTTP endpoint, because
 # salt-master serves no HTTP unless salt-api is enabled.

@@ -1,70 +1,99 @@
 # syntax=docker/dockerfile:1
 #
-# Salt master image, built from the official Salt Project packages.
+# Salt master on Red Hat UBI 10, from the official Salt Project packages.
 #
-# Exists because there is no current upstream container: docker.io/saltstack/salt
-# stops at 3006.5 (Feb 2024) while Salt is at 3008.x. The official image build
-# (gitlab.com/saltstack/open/saltdocker, cicd/docker/alpine.Dockerfile) is pinned
-# to python:3.7-alpine, and Python 3.7 went end-of-life in June 2023, which is
-# why that line stalled.
+# Why this image exists: there is no current upstream Salt container.
+# docker.io/saltstack/salt stops at 3006.5 (Feb 2024) while Salt is at 3008.x.
+# The official build (gitlab.com/saltstack/open/saltdocker) is pinned to
+# python:3.7-alpine, and Python 3.7 went end-of-life in June 2023.
 #
-# Packages, not pip: Salt publishes an sdist only, so pip would rebuild Salt and
-# its dependencies locally. The apt repo carries the same binaries the Salt
-# Project ships to servers - onedir packages with their own bundled Python - so
-# the container runs the build Salt actually tests and supports.
+# Packages, not pip: PyPI carries an sdist only, so pip would rebuild Salt and
+# its dependencies locally. The Salt RPM repo is flat and distro-agnostic -
+# these are onedir builds with their own bundled Python, so they do not depend
+# on the base image's Python and install cleanly on UBI.
+#
+# Hardening, in the order it appears below:
+#   - UBI minimal base, no weak dependencies, no documentation
+#   - package signatures verified against the Salt Project GPG key (gpgcheck=1)
+#   - tini pinned by version and verified by SHA-256 before it is trusted
+#   - every setuid/setgid bit cleared: nothing in here needs to escalate
+#   - package manager caches and the repo definition removed after install
+#   - runs as a non-root uid, group root, with only its own paths writable
+#   - no shell entrypoint, no build tools, no curl left in the final image
 #
 # Build:
-#   docker build -t ghcr.io/<owner>/salt:3008.2 --build-arg SALT_VERSION=3008.2 .
+#   docker build -t <repo>/salt:3008.2 --build-arg SALT_VERSION=3008.2 .
 
-FROM debian:bookworm-slim
-
-# Any version in the repo. 3008.2 is current; 3006.x is the older maintained
-# line. Check what is available:
-#   curl -s https://packages.broadcom.com/artifactory/saltproject-deb/dists/stable/main/binary-amd64/Packages.gz \
-#     | gunzip | awk '/^Package: salt-master$/{p=1} p&&/^Version:/{print $2;p=0}'
+ARG UBI_VERSION=10.2
 ARG SALT_VERSION=3008.2
+ARG TINI_VERSION=v0.19.0
+
+# --------------------------------------------------------------- tini fetcher
+# Separate stage so curl and the checksum files never reach the final image.
+FROM registry.access.redhat.com/ubi10-minimal:${UBI_VERSION} AS tini
+
+ARG TINI_VERSION
+# Provided by BuildKit; amd64/arm64 match tini's asset names directly.
+ARG TARGETARCH
+
+# Installed explicitly rather than assumed: ubi-minimal's contents are not a
+# stable interface, and a missing curl would fail deep in the build.
+RUN set -eux; \
+    microdnf install -y --setopt=install_weak_deps=0 --nodocs curl coreutils-single; \
+    curl -fsSL -o /tini \
+      "https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-${TARGETARCH}"; \
+    curl -fsSL -o /tini.sha256sum \
+      "https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-${TARGETARCH}.sha256sum"; \
+    # The published sum names the release asset; point it at the downloaded file.
+    echo "$(cut -d' ' -f1 /tini.sha256sum)  /tini" | sha256sum -c -; \
+    chmod 0755 /tini
+
+# ---------------------------------------------------------------------- salt
+FROM registry.access.redhat.com/ubi10-minimal:${UBI_VERSION}
+
+ARG SALT_VERSION
 
 LABEL org.opencontainers.image.title="salt-master" \
-      org.opencontainers.image.description="Salt master from the official packages, built for Kubernetes and OpenShift" \
+      org.opencontainers.image.description="Salt master on UBI 10, from the official Salt packages" \
       org.opencontainers.image.version="${SALT_VERSION}" \
       org.opencontainers.image.source="https://github.com/Pirateparty99/salt-stack-helm" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10-minimal" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-# tini reaps zombies and forwards signals, so the master stops promptly rather
-# than waiting out the termination grace period. git is for gitfs backends, and
-# openssh-client so those can be ssh remotes. salt-ssh is a separate package and
-# is deliberately not installed.
-#
-# curl and gnupg are only needed to add the repo, so they are removed in the
-# same layer - leaving them would keep them in the image regardless of a later
-# uninstall.
+# The Salt RPM repo is flat - one baseurl for every distribution, because the
+# onedir packages bundle their own Python. gpgcheck is on and the key is
+# imported first, so an unsigned or tampered package fails the build.
 RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        gnupg \
-        tini \
-        git \
-        openssh-client; \
-    mkdir -p /etc/apt/keyrings; \
-    curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public \
-        -o /etc/apt/keyrings/salt-archive-keyring.pgp; \
-    curl -fsSL https://github.com/saltstack/salt-install-guide/releases/latest/download/salt.sources \
-        -o /etc/apt/sources.list.d/salt.sources; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        "salt-master=${SALT_VERSION}" \
-        "salt-api=${SALT_VERSION}"; \
+    rpm --import https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public; \
+    printf '%s\n' \
+      '[salt]' \
+      'name=Salt Project' \
+      'baseurl=https://packages.broadcom.com/artifactory/saltproject-rpm/' \
+      'enabled=1' \
+      'gpgcheck=1' \
+      'gpgkey=https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public' \
+      > /etc/yum.repos.d/salt.repo; \
+    microdnf install -y --setopt=install_weak_deps=0 --nodocs \
+        "salt-master-${SALT_VERSION}" \
+        "salt-api-${SALT_VERSION}" \
+        git-core \
+        openssh-clients; \
     salt-master --version; \
-    apt-get purge -y --auto-remove curl gnupg; \
-    rm -rf /var/lib/apt/lists/*
+    microdnf clean all; \
+    rm -rf /var/cache/dnf /var/cache/yum /etc/yum.repos.d/salt.repo
 
-# The packages create their own salt user, whose uid is not guaranteed. What
-# matters for OpenShift is the group: it runs containers as an arbitrary UID
-# from the namespace range with gid 0 in the supplementary groups, so every path
-# Salt writes is group-owned by root with group permissions mirroring user
-# permissions. An image only its own uid can write fails under restricted-v2.
+COPY --from=tini /tini /usr/bin/tini
+
+# Salt needs none of these to run a master, and a container that cannot
+# escalate privileges is one less thing to reason about.
+RUN set -eux; \
+    find / -xdev -perm /6000 -type f -exec chmod -s {} + 2>/dev/null || true; \
+    find / -xdev -perm /6000 -type f -print | grep . && exit 1 || true
+
+# Group-owned by root with group permissions mirroring user permissions:
+# OpenShift runs containers as an arbitrary UID from the namespace range with
+# gid 0 in the supplementary groups, so an image only its own uid can write
+# fails under restricted-v2. Nothing else in the filesystem is made writable.
 RUN set -eux; \
     mkdir -p /etc/salt/pki /etc/salt/master.d /srv/salt /srv/pillar \
              /var/cache/salt /var/log/salt /var/run/salt; \
@@ -76,10 +105,11 @@ RUN set -eux; \
 # 4505 publish, 4506 return, 8000 salt-api.
 EXPOSE 4505 4506 8000
 
-# Non-root by default. OpenShift replaces this with a UID from the namespace
-# range, which the group permissions above accommodate. On plain Kubernetes the
-# uid is arbitrary but stable, and gid 0 keeps the same paths writable.
 USER 1000:0
 
+STOPSIGNAL SIGTERM
+
+# tini reaps the workers salt-master forks and forwards signals, so the pod
+# stops promptly instead of waiting out its termination grace period.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["salt-master", "--log-level=info"]

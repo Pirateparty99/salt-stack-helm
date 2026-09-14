@@ -49,3 +49,18 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "salt.image" -}}
 {{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) -}}
 {{- end -}}
+
+{{/*
+The mounts Salt needs to write to when the root filesystem is read-only.
+Shared by the master and api containers so the two cannot drift apart.
+*/}}
+{{- define "salt.writableMounts" -}}
+- name: run
+  mountPath: /var/run/salt
+- name: logs
+  mountPath: /var/log/salt
+- name: cache
+  mountPath: /var/cache/salt
+- name: tmp
+  mountPath: /tmp
+{{- end -}}
