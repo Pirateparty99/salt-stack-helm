@@ -47,7 +47,11 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          command: ["sh", "-c", "cp -a /saltgui/. /shared/ && test -f /shared/index.html"]
+          # cp -r, not -a: preserving timestamps on the volume root fails as
+          # "Operation not permitted" for the arbitrary UID this runs as, and
+          # the attributes buy nothing - both containers in this pod run as the
+          # same UID, so the copied files are readable either way.
+          command: ["sh", "-c", "cp -r /saltgui/. /shared/ && test -f /shared/index.html && test -d /shared/static"]
           volumeMounts:
             - name: saltgui
               mountPath: /shared
