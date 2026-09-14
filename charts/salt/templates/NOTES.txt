@@ -23,3 +23,14 @@ Minion keys live on the salt-data volume. Losing it means re-accepting every min
 {{- else -}}
 WARNING: persistence is disabled - minion keys are lost on every restart.
 {{- end }}
+
+{{ if and .Values.saltgui.enabled .Values.api.enabled -}}
+SaltGUI is served by salt-api at /app (the API itself is at /):
+{{ if .Values.route.enabled }}  https://{{ .Values.route.host }}/app
+{{- else }}  port-forward 8000 and open http://localhost:8000/app
+{{- end }}
+{{ if not .Values.externalAuth.enabled -}}
+WARNING: externalAuth is disabled, so salt-api has nothing to authenticate
+against and every login will fail.
+{{- end }}
+{{- end }}

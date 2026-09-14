@@ -94,6 +94,10 @@ externalAuth:
         - '@jobs'
 ```
 
+The UI is at **`/app`**, not the root — `rest_cherrypy` serves the API at `/`
+and the single-page app at `/app`. So with the Route above:
+`https://salt.apps.example.com/app`.
+
 The trailing `%` on the group DN is what marks it as a group rather than a
 user. Without it the rule matches a user of that name, which does not exist,
 and every login is refused.
