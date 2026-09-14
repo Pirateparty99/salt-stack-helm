@@ -59,6 +59,12 @@ platform assign one. Set it explicitly only where the cluster requires it.
 | `persistence.storageClass` | `""` | Cluster default when empty. |
 | `gitsync.enabled` | `false` | Sidecar syncing `/srv/salt` from git; needs `gitsync.repo`. |
 
+## Verified on OpenShift
+
+Deployed to OKD 4.19 and confirmed running: admitted by `restricted-v2` with an
+assigned UID from the namespace range, `salt-key` responding, listening on 4505
+and 4506, and the root filesystem read-only.
+
 ## Accepting minions
 
 `auto_accept` is off by default. Accept keys by hand:

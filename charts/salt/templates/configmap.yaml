@@ -5,9 +5,17 @@ metadata:
   labels:
     {{- include "salt.labels" . | nindent 4 }}
 data:
-  # Mounted at /etc/salt/master.d/master.conf, which salt-master reads in
-  # addition to its packaged defaults.
-  master.conf: |
+  # Mounted over /etc/salt/master, replacing the packaged file rather than
+  # layering under it in master.d. The package ships `user: salt`, which makes
+  # salt-master try to become a user it is not: under OpenShift the container
+  # runs as an arbitrary UID with no passwd entry, so the lookup fails with
+  # "Failed to prepare the Salt environment for user" and the master exits 2.
+  # With no `user` key at all Salt runs as whoever started it, which is correct
+  # here and cannot be expressed by overriding the key.
+  master: |
+    # The default pidfile is /var/run/salt-master.pid, which is on the
+    # read-only root filesystem. This path is the emptyDir mounted below.
+    pidfile: /var/run/salt/salt-master.pid
     {{- toYaml .Values.config | nindent 4 }}
     {{- if .Values.api.enabled }}
     rest_cherrypy:
